@@ -49,24 +49,33 @@ deltar_qr1 = data(:,5);
 
 figure;
 subplot(3,1,1);
-plot(xr0, xr1, 'b-');
+plot(xr0, xr1, 'b-', 'LineWidth', 2);
 hold on;
-plot(x0, x1, 'r-');
+plot(x0, x1, 'r-', 'LineWidth', 2);
 hold on;
-thc = 0:pi/50:2*pi;
-xc = 0.12 * cos(thc) - 0;
-yc = 0.12 * sin(thc) - 1.25;
-plot(xc, yc, 'y-');
-hold on;
+dataobst = readmatrix('obstacles.txt');
+if ~all(isnan(dataobst), 'all')
+    for i=1:size(dataobst,1)
+        thc = 0:pi/50:2*pi;
+        xc = dataobst(i,3) * cos(thc) + dataobst(i,1);
+        yc = dataobst(i,3) * sin(thc) + dataobst(i,2);
+        plot(xc, yc, 'black-', 'LineWidth', 2);
+        hold on;
+        xc = (dataobst(i,3)+0.02) * cos(thc) + dataobst(i,1);
+        yc = (dataobst(i,3)+0.02) * sin(thc) + dataobst(i,2);
+        plot(xc, yc, 'y-', 'LineWidth', 2);
+        hold on;
+    end
+end
 % thc = 0:pi/50:2*pi;
 % xc = 0.3 * cos(thc) + 1;
 % yc = 0.3 * sin(thc) - 0;
 % plot(xc, yc, 'y-');
 % hold on;
 % plot(1:length(xr0), xr0 - x0)
-title('xe');
-xlim([-1.5 1.5]);
-ylim([-2 2]);
+title('xye');
+% xlim([-1.5 1.5]);
+% ylim([-2 2]);
 grid on;
 
 subplot(3,1,2);
