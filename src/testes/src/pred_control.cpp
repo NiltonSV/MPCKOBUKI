@@ -11,7 +11,6 @@ void PredControl::SetInternalVariables()
     this->nxa = this->nx;                           // # aumented states
     this->nc  = this->C_cons.rows();                // # constraints
     this->ncv = this->C_consV.cols();               // # constraints variables
-    // this->nc_vel = this->C_consStates.rows();    // # constraints variables
 }
 
 void PredControl::ResizeMatrices()
@@ -55,12 +54,6 @@ void PredControl::ResizeMatrices()
 
     this->Phi_cons.resize(this->nc * N, this->nxa);
     this->Phi_cons.setZero();
-
-    // this->G_consStates.resize(this->nc_vel * this->N, this->nu * this->M);
-    // this->G_consStates.setZero();
-
-    // this->Phi_consStates.resize(this->nc_vel * N, this->nxa);
-    // this->Phi_consStates.setZero();
 
     this->Uc_block.resize(this->nc * this->N, 1);
     this->Uc_block.setZero();
@@ -130,6 +123,9 @@ void PredControl::SetWeightMatrices(const Eigen::MatrixXd &Q, const Eigen::Matri
 
 void PredControl::SetConsBounds(const Eigen::MatrixXd &Lb, const Eigen::MatrixXd &Ub, const std::vector<Obstacle>& obstacles)
 {
+    if (!this->nc)
+        return;
+
     if ((Lb.rows() != this->nc_vel || Lb.cols() != 1))
     {
         std::cout << "Wrong Lower Bound dimension" << std::endl;
@@ -156,6 +152,7 @@ void PredControl::SetConsBounds(const Eigen::MatrixXd &Lb, const Eigen::MatrixXd
             this->Uc_block.block(i * this->nc, 0, this->nc_vel, 1) = this->Uc;
         }
         this->UpdateObstacleConstraints(obstacles, i);
+        this->updateStatesConstraints(i);
         this->Lcv_block.block(i * this->nc, 0, this->nc, this->ncv) = this->C_consV;
         this->Ucv_block.block(i * this->nc, 0, this->nc, this->ncv) = this->C_consV;
     }
@@ -221,30 +218,13 @@ void PredControl::UpdateOptimizationProblem(Eigen::MatrixXd &H,
     H = 2 * (this->G.transpose() * this->Q_block * this->G + this->R_block);
 
     // F = 2 * (((this->Phi * this->x) - this->Ref_block).transpose()) * this->Q_block * this->G;
-    F = 2 * this->G.transpose() * this->Q_block * this-> Phi * (this->x - this->Ref_block.block(0, 0, this->nxa, 1));
-    // F = 2 * this->G.transpose() * this->Q_block * (this->Phi * this->x - this->Ref_block);
+    // F = 2 * this->G.transpose() * this->Q_block * this-> Phi * (this->x - this->Ref_block.block(0, 0, this->nxa, 1));
+    F = 2 * this->G.transpose() * this->Q_block * (this->Phi * this->x - this->Ref_block);
     Ain = this->G_cons;
 
-    lowerBound = this->Lc_block - this->Phi_cons * this->x + this->Lcv_block * this->Lcv_var;
+    lowerBound = this->Lc_block - this->Phi_cons * this->x; //+ this->Lcv_block * this->Lcv_var;
 
-    upperBound = this->Uc_block - this->Phi_cons * this->x + this->Ucv_block * this->Ucv_var;
-
-    // Ain = this->G_cons;
-
-    // lowerBound = this->Lc_block - this->Phi_cons * this->x;
-    // upperBound = this->Uc_block - this->Phi_cons * this->x;
-    // Eigen::MatrixXd umin(3, 1);
-    // Eigen::MatrixXd umax(3, 1);
-
-    // // Límites de velocidad
-    // umin.block(0, 0, 2, 1) << -1.47, -3.77; // vmin, wmin
-    // umax.block(0, 0, 2, 1) << 1.47, 3.77;   // vmax, wmax
-    // for (int i = 0; i < this->N; i++) {
-    //     for (int j = 0; j < 2 && j < this->nc; j++) {
-    //         lowerBound(i * this->nc + j) = umin(j, 0);
-    //         upperBound(i * this->nc + j) = umax(j, 0);
-    //     }
-    // }
+    upperBound = this->Uc_block - this->Phi_cons * this->x; //+ this->Ucv_block * this->Ucv_var;
 }
 
 void PredControl::DefinePhi()
@@ -259,6 +239,7 @@ void PredControl::DefineConstraintMtxs()
     // this->Phi_cons.block(0, 0, this->nc, this->nxa).setZero();
     if(this->nc_vel)
     {
+        this->Phi_cons.block(0, 0, this->nc, this->nxa).setZero();
         this->aux_cons.setZero();
         this->aux_cons.block(0, 0, 2, this->nu) = Eigen::MatrixXd::Identity(2, this->nu);
     }
@@ -274,26 +255,38 @@ void PredControl::DefineConstraintMtxs()
     }
 }
 
-// void PredControl::updateStatesConstraints(int iter)
-// {
-//     if (!this->nc_states) {
-//         return;
-//     }
+void PredControl::updateStatesConstraints(int iter)
+{
+    if (!this->nc_states) {
+        return;
+    }
 
-//     this->C_cons.block(iter+this->nc-2, 0, 1, 1) << 1;
-//     this->C_cons.block(iter+this->nc-1, 1, 1, 1) << 1;
-    // this->Lc_block(iter+this->nc-2) = -0.05+xr;
-    // this->Uc_block(iter+this->nc-2) = 0.05+xr;
-    // this->Lc_block(iter+this->nc-1) = -0.05+yr;
-    // this->Uc_block(iter+this->nc-1) = 0.05+yr;
-// }
+
+    for (int i = 0; i<this->nc_states; ++i)
+    {
+        double d0 = sqrt((this->x(0))*(this->x(0))+(this->x(1)+1.25)*(this->x(1)+1.25));
+        // if (d0 > 0.3){
+        //     this->C_cons.block(this->nc - (this->nc_states - i), 1, 1, 1) << 1;
+        //     this->Lc_block((iter+1)*this->nc-(this->nc_states-i)) = -OsqpEigen::INFTY;
+        //     this->Uc_block((iter+1)*this->nc-(this->nc_states-i)) = OsqpEigen::INFTY;
+        //     return;
+        // }
+        this->C_cons.block(this->nc - (this->nc_states - i), 1, 1, 1) << 1;
+        this->Lc_block((iter+1)*this->nc-(this->nc_states-i)) = -0.80;
+        this->Uc_block((iter+1)*this->nc-(this->nc_states-i)) = OsqpEigen::INFTY; //-0.95;
+    }
+
+    // this->C_cons.block(this->nc-this->nc_states - 1, 1, 1, 1) << 1;
+    // this->Lc_block((iter+1)*this->nc-1) = -0.05+this->current_iter;
+    // this->Uc_block((iter+1)*this->nc-1) = 0.05+this->current_iter;
+}
 void PredControl::UpdateObstacleConstraints(const std::vector<Obstacle>& obstacles, int iter) 
 {
     if (obstacles.empty()) {
         return;
     }
 
-    for (size_t i = 0; i < obstacles.size() && (i) < this->nc; i++) {
+    for (size_t i = 0; i < obstacles.size(); i++) {
         double dx = this->x(0) - obstacles[i].x;
         double dy = this->x(1) - obstacles[i].y;
         double current_dist = sqrt(dx*dx + dy*dy);
@@ -306,7 +299,7 @@ void PredControl::UpdateObstacleConstraints(const std::vector<Obstacle>& obstacl
 
         double grad_x = dx / current_dist;
         double grad_y = dy / current_dist;
-        
+
         this->C_cons.block(i+this->nc_vel, 0, 1, 2) << grad_x, grad_y;
         
         double safety_distance = obstacles[i].radius + 0.01 + 0.01;
@@ -314,7 +307,6 @@ void PredControl::UpdateObstacleConstraints(const std::vector<Obstacle>& obstacl
         this->Lc_block(iter * this->nc + i + this->nc_vel) = safety_distance - current_dist + grad_x*this->x(0) + grad_y*this->x(1);
         this->Uc_block(iter * this->nc + i + this->nc_vel) = OsqpEigen::INFTY;
     }
-    
 }
 
 void PredControl::UpdatePredictionModel()
@@ -347,11 +339,12 @@ void PredControl::UpdatePredictionModel()
 
             if (i != 0)
             {
-                this->Phi.block(i * this->ny, 0, this->ny, this->nxa) = this->Phi.block((i - 1) * this->ny, 0, this->ny, this->nxa) * this->A;
+                this->Phi.block(i * this->ny, 0, this->ny, this->nxa) = this->A * this->Phi.block((i - 1) * this->ny, 0, this->ny, this->nxa) ;
                 this->aux_mdl = this->Phi.block((i - 1) * this->ny, 0, this->ny, this->nxa) * this->B;
 
                 this->Phi_cons.block(i * this->nc, 0, this->nc, this->nxa) = this->Phi_cons.block((i - 1) * this->nc, 0, this->nc, this->nxa) * this->A;
                 this->aux_cons = this->Phi_cons.block((i - 1) * this->nc, 0, this->nc, this->nxa) * this->B;
+                this->aux_cons.block(0, 0, 2, this->nu) = Eigen::MatrixXd::Identity(2, this->nu);
             }
 
             while ((j < this->M) and (i + j < this->N))
@@ -364,6 +357,80 @@ void PredControl::UpdatePredictionModel()
     }
 }
 
+void PredControl::updateStatesMatrices(int p)
+{
+    this->A << 1, 0, -this->v_ref[this->current_iter+p] * sin(this->th_ref[this->current_iter+p]) * this->dt,
+                0, 1, this->v_ref[this->current_iter+p] * cos(this->th_ref[this->current_iter+p]) * this->dt,
+                0, 0,                    1;
+
+    this->B << cos(this->th_ref[this->current_iter+p]) * this->dt,    -0.0 * this->dt * this->dt * this->v_ref[this->current_iter+p] * sin(this->th_ref[this->current_iter+p]),
+            sin(this->th_ref[this->current_iter+p]) * this->dt,    0.0 * this->dt * this->dt * this->v_ref[this->current_iter+p] * sin(this->th_ref[this->current_iter+p]),
+                    0                   , this->dt;
+
+
+}
+// void PredControl::UpdatePredictionModel()
+// {
+//     if (this->nc == 0)
+//     {
+//         // Eigen::Matrix3d aux_G = Eigen::Matrix3d::Identity();
+
+//         for (int i = 0; i < N; i++)
+//         {
+//             int j = 0;
+
+//             if (i != 0)
+//             {
+//                 this->updateStatesMatrices(i);
+//                 this->Phi.block(i * this->ny, 0, this->ny, this->nxa) = this->A * this->Phi.block((i - 1) * this->ny, 0, this->ny, this->nxa);
+// //                 this->aux_cons = this->Phi_cons.block((i - 1) * this->nc, 0, this->nc, this->nxa) * this->B;
+//             }
+
+//             while ((j < this->M) and (i + j < this->N))
+//             {
+//                 this->updateStatesMatrices(i+j);
+//                 if (i != 0){
+//                     this->aux_mdl = this->A * G.block((i + j - 1) * this->ny, j * this->nu, this->ny, this->nu);
+//                 }
+//                 // this->aux_mdl = aux_G * this->B;
+//                 this->G.block((i + j) * this->ny, j * this->nu, this->ny, this->nu) = this->aux_mdl;
+//                 j++;
+//             }
+//         }
+//     }
+//     else
+//     {
+//         std::cout << "Entró aquí" << std::endl;
+//         this->DefineConstraintMtxs();
+//         for (int i = 0; i < N; i++)
+//         {
+//             int j = 0;
+
+//             if (i != 0)
+//             {
+//                 this->updateStatesMatrices(i);
+//                 this->Phi.block(i * this->ny, 0, this->ny, this->nxa) = this->A * this->Phi.block((i - 1) * this->ny, 0, this->ny, this->nxa);
+//                 // std::cout << "Entró aquí PHI" << std::endl;
+//                 this->Phi_cons.block(i * this->nc, 0, this->nc, this->nxa) = this->Phi_cons.block((i - 1) * this->nc, 0, this->nc, this->nxa) * this->A;
+//                 // std::cout << "Entró aquí PHI cons" << std::endl;
+//             }
+
+//             while ((j < this->M) and (i + j < this->N))
+//             {
+//                 this->updateStatesMatrices(i+j);
+//                 if (i != 0){
+//                     this->aux_mdl = this->A * G.block((i + j - 1) * this->ny, j * this->nu, this->ny, this->nu);
+//                     this->aux_cons = G_cons.block((i + j - 1) * this->nc, j * this->nu, this->nc, this->nu) * this->A;
+//                 }
+//                 // std::cout << "Entró aquí G" << std::endl;
+//                 // this->aux_mdl = aux_G * this->B;
+//                 this->G.block((i + j) * this->ny, j * this->nu, this->ny, this->nu) = this->aux_mdl;
+//                 this->G_cons.block((i + j) * this->nc, j * this->nu, this->nc, this->nu) = this->aux_cons;
+//                 j++;
+//             }
+//         }
+//     }
+// }
 void PredControl::ConfPO()
 {
     // then, configure the solver
@@ -425,6 +492,8 @@ int PredControl::SolvePO()
         if (this->solver.getStatus() != OsqpEigen::Status::Solved)
         {
             std::cout << "Not solved - error: " << std::endl;
+            std::cout << "Lc_block: " << this->Lc_block << std::endl;
+            std::cout << "Lb: " << this->Lb << std::endl;
             return 0;
         }
 
